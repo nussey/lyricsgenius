@@ -11,6 +11,7 @@ import (
 
 const (
 	lyricSearchBaseURL = "http://search.azlyrics.com/search.php?q="
+	debugMode          = true
 )
 
 type searchResults struct {
@@ -41,7 +42,10 @@ func main() {
 		searchTerm = "Madness"
 	}
 
-	resp, _ := http.Get(lyricSearchBaseURL + searchTerm)
+	resp, err := http.Get(lyricSearchBaseURL + searchTerm)
+	if err != nil {
+		panic("Failed to scrape azlyrics website")
+	}
 	// Print out the contents of the webpage we scraped
 	// bytes, _ := ioutil.ReadAll(resp.Body)
 	// fmt.Println("HTML:\n\n", string(bytes))
@@ -49,44 +53,57 @@ func main() {
 
 	z := html.NewTokenizer(resp.Body)
 
+	results := parseSearchPage(z)
+
+	fmt.Println(results)
+
+}
+
+func parseSearchPage(tree *html.Tokenizer) *searchResults {
 	var results searchResults
 	for {
-		tt := z.Next()
+		tt := tree.Next()
 
 		switch {
 		case tt == html.ErrorToken:
 			// End of the document, we're done
-			break
+			return &results
 		case tt == html.StartTagToken:
-			t := z.Token()
+			t := tree.Token()
 
 			if t.Data == "a" {
 				results.processLink(t)
 			}
 
 			if results.CurrentLink != nil && t.Data == "b" {
+				fmt.Println("foobar2")
 				results.InBold = true
 			}
 		case tt == html.TextToken:
-			t := z.Token()
-			if results.InBold {
-				results.InBold = false
-				fmt.Println(t.String())
+			t := tree.Token()
 
-				if results.CurrentLink.Title == "" {
-					results.CurrentLink.Title = t.String()
-				} else if results.CurrentLink.Artist == "" {
-					results.CurrentLink.Artist = t.String()
-					results.Links = append(results.Links, *results.CurrentLink)
-					results.CurrentLink = nil
-				} else {
-					panic("We found one to many text fields, they probably changed their site")
-				}
-			}
+			results.processText(t)
+		}
+
+	}
+}
+
+func (sr *searchResults) processText(t html.Token) {
+	if sr.InBold {
+		sr.InBold = false
+		fmt.Println(t.String())
+
+		if sr.CurrentLink.Title == "" {
+			sr.CurrentLink.Title = t.String()
+		} else if sr.CurrentLink.Artist == "" {
+			sr.CurrentLink.Artist = t.String()
+			fmt.Println(sr.CurrentLink)
+			sr.Links = append(sr.Links, *sr.CurrentLink)
+			sr.CurrentLink = nil
+		} else {
+			panic("We found one to many text fields, they probably changed their site")
 		}
 	}
-
-	fmt.Println(results.Links)
 }
 
 // Process a <a> element on page
@@ -98,6 +115,7 @@ func (sr *searchResults) processLink(t html.Token) {
 			// The "More Album Results" link
 			if attr.Key == "href" && strings.Contains(attr.Val, "w=albums") {
 				sr.PastAlbums = true
+				debugf("Finished processing past albums")
 			}
 		} else {
 			// If we have found one of the links we care about
@@ -117,4 +135,10 @@ func (sr *searchResults) addNewLink(linkAddr string) {
 	newLink.Addr = linkAddr
 
 	sr.CurrentLink = &newLink
+}
+
+func debugf(strs ...string) {
+	if debugMode {
+		fmt.Println(strings.Join(strs, ""))
+	}
 }
